@@ -1,0 +1,22 @@
+[Unit]
+Description=VPS Control Telegram Bot
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Боту нужны права на управление WireGuard и systemd-сервисами.
+# Проще всего запускать от root, но для продакшена лучше настроить
+# отдельного пользователя с точечными sudo-правами (см. README.md).
+User=root
+WorkingDirectory=/opt/vpsbot
+ExecStart=/opt/vpsbot/vpsbot
+Restart=on-failure
+RestartSec=5
+
+# Небольшое ужесточение (не мешает работе с /etc/wireguard и systemctl)
+NoNewPrivileges=false
+ProtectSystem=false
+
+[Install]
+WantedBy=multi-user.target

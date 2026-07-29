@@ -1,0 +1,13 @@
+{
+  "bot_token": "PUT_YOUR_TOKEN_HERE",
+  "allowed_user_id": 1654167900,
+  "wireguard": {
+    "interface": "wg0",
+    "config_path": "/etc/wireguard/wg0.conf",
+    "server_public_key": "SERVER_PUBLIC_KEY_HERE",
+    "endpoint": "your.server.ip:51820",
+    "subnet_base": "10.0.0",
+    "dns": "1.1.1.1",
+    "clients_dir": "/etc/wireguard/clients"
+  }
+}
