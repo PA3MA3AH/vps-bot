@@ -1,0 +1,4 @@
+build/
+*.o
+config/config.json
+*.log
