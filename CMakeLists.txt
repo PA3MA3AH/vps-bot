@@ -16,6 +16,7 @@ add_executable(vpsbot
     src/main.cpp
     src/system_info.cpp
     src/wireguard_manager.cpp
+    src/xray_manager.cpp
     src/config.cpp
     src/shell_exec.cpp
 )

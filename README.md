@@ -6,22 +6,38 @@ Telegram-бот на C++ для управления вашим VPS и WireGuard
 
 ## Возможности
 
-- `/status` — CPU, RAM, диск, аптайм, число клиентов WireGuard
-- `/wg` — список клиентов WireGuard (кто активен прямо сейчас)
+**WireGuard:**
+- `/status` — CPU (с ядрами и load average), RAM, диск, аптайм, число клиентов WireGuard/VLESS онлайн
+- `/wg` — список клиентов WireGuard с реальной проверкой "онлайн" через ICMP-пинг
+  на внутренний IP каждого клиента (а не по факту последнего handshake, который
+  может быть устаревшим) — все клиенты пингуются параллельно, так что команда
+  не тормозит даже при большом их числе
 - `/newclient <имя>` — создать нового клиента: генерирует ключи, добавляет
   peer в WireGuard "на лету" (без разрыва существующих соединений),
   сохраняет в конфиг для переживания перезагрузки, присылает `.conf` и QR-код
 - `/deleteclient <имя>` — удалить клиента
+- `/rename <ip> <новое_имя>` — задать/поменять имя клиенту по его IP (полезно
+  для клиентов, которых вы когда-то добавляли в WireGuard вручную — они
+  показывались в /wg как "без имени", теперь можно проименовать)
+
+**VLESS/Reality (для клиентов вроде Happ, v2rayNG, Shadowrocket):**
+- `/vless` — список клиентов
+- `/newvless <имя>` — создать клиента, прислать ссылку `vless://...` и QR
+- `/deletevless <имя>` — удалить клиента
+
+**Прочее:**
 - `/logs <сервис>` — последние 50 строк `journalctl -u <сервис>`
 - `/update` — `apt update && apt upgrade -y`, с подтверждением через кнопку
 - `/reboot` — перезагрузка сервера, с подтверждением через кнопку
+- Уведомление в Telegram с логами, если бот аварийно упадёт (см. ниже)
 
 ## 1. Зависимости на VPS (Debian/Ubuntu)
 
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake git libboost-system-dev \
-    libssl-dev nlohmann-json3-dev qrencode wireguard-tools
+    libssl-dev nlohmann-json3-dev qrencode wireguard-tools iputils-ping \
+    libcurl4-openssl-dev zlib1g-dev
 ```
 
 ### Сборка и установка tgbot-cpp
@@ -85,6 +101,35 @@ sudo systemctl status vpsbot
 ```
 
 Логи бота: `journalctl -u vpsbot -f`
+
+## 5. VLESS/Reality для Happ (опционально, параллельно с WireGuard)
+
+WireGuard и VLESS/Reality — независимые VPN-стеки, работают на сервере
+одновременно и никак друг другу не мешают.
+
+```bash
+sudo bash scripts/install_xray.sh            # порт 8443, SNI www.microsoft.com по умолчанию
+# либо со своими параметрами:
+sudo bash scripts/install_xray.sh 443 www.cloudflare.com
+```
+
+Скрипт установит Xray-core, сгенерирует ключи Reality и в конце выведет
+готовый JSON-фрагмент — скопируйте его в `/opt/vpsbot/config.json`, в секцию
+`"xray"` (см. пример в `config/config.example.json`), затем:
+
+```bash
+sudo systemctl restart vpsbot
+```
+
+После этого в Telegram станут доступны `/vless`, `/newvless <имя>`,
+`/deletevless <имя>`. Присланную ботом `vless://` ссылку (или QR) добавляете
+в Happ через "Импорт по ссылке" / сканирование QR.
+
+**Про порт и SNI:** `dest`/`serverNames` в конфиге Reality — это домен,
+под который сервер маскируется (Reality проксирует незашифрованным клиентам
+трафик реального `www.microsoft.com`, чтобы не выделяться на DPI). Если
+443 порт уже занят чем-то другим на сервере — используйте другой порт для
+Xray (по умолчанию скрипт берёт 8443), это не критично для маскировки.
 
 ## Важные замечания по безопасности
 
@@ -158,12 +203,13 @@ journalctl -u vpsbot-notify.service -n 30 --no-pager
   снаружи и сам присылает алерт, если тот не отвечает) — можем сделать
   это отдельным шагом, если понадобится.
 
-## Дальнейшие шаги (по этапам из вашего плана)
+## Дальнейшие шаги
 
-- v0.2 ✅ реализовано в этой версии (`/newclient`, `/deleteclient`, QR)
-- v0.3 частично: `/logs`, `/update` есть; можно добавить `/restart-service <имя>`
-  по аналогии с `/logs`
-- v1.0: меню на reply-кнопках, поддержка нескольких VPS (несколько блоков
-  в config.json + выбор через команду), уведомления о падении диска/сервиса
-  через периодический таймер (`std::thread` + `sleep` или systemd timer,
-  который дергает отдельный endpoint бота)
+- v0.2 ✅ (`/newclient`, `/deleteclient`, QR)
+- v0.3 ✅ (`/logs`, `/update`, `/reboot`, уведомление о падении)
+- v0.4 ✅ (VLESS/Reality параллельно с WireGuard, реальный пинг-статус,
+  `/rename`)
+- Дальше: меню на reply-кнопках, поддержка нескольких VPS (несколько блоков
+  в config.json + выбор через команду), `/restart-service <имя>` по
+  аналогии с `/logs`, внешний мониторинг на случай падения всего сервера
+  целиком (см. "Важные ограничения" выше)

@@ -43,13 +43,35 @@ CpuTimes readCpuTimes() {
 
 double getCpuUsagePercent() {
     CpuTimes a = readCpuTimes();
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
     CpuTimes b = readCpuTimes();
 
     long long totalDiff = b.total - a.total;
     long long idleDiff = b.idle - a.idle;
     if (totalDiff <= 0) return 0.0;
-    return (1.0 - static_cast<double>(idleDiff) / totalDiff) * 100.0;
+    double pct = (1.0 - static_cast<double>(idleDiff) / totalDiff) * 100.0;
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    return pct;
+}
+
+std::string getLoadAverage() {
+    std::ifstream f("/proc/loadavg");
+    double one = 0, five = 0, fifteen = 0;
+    f >> one >> five >> fifteen;
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.2f %.2f %.2f", one, five, fifteen);
+    return std::string(buf);
+}
+
+int getCpuCoreCount() {
+    std::ifstream f("/proc/cpuinfo");
+    std::string line;
+    int count = 0;
+    while (std::getline(f, line)) {
+        if (line.rfind("processor", 0) == 0) count++;
+    }
+    return count > 0 ? count : 1;
 }
 
 struct MemInfo {
@@ -111,53 +133,26 @@ std::string getUptime() {
     return oss.str();
 }
 
-int countWireGuardPeers(int& active) {
-    // Использует `wg show <iface> dump`, если wg установлен и есть права.
-    auto [code, out] = shell::run("wg show all dump");
-    active = 0;
-    int total = 0;
-    std::istringstream iss(out);
-    std::string line;
-    long long now = static_cast<long long>(std::time(nullptr));
-    while (std::getline(iss, line)) {
-        std::istringstream ls(line);
-        std::vector<std::string> fields;
-        std::string tok;
-        while (ls >> tok) fields.push_back(tok);
-        // строка интерфейса имеет 4 поля, строка пира — 8
-        if (fields.size() >= 8) {
-            total++;
-            long long handshake = 0;
-            try { handshake = std::stoll(fields[4]); } catch (...) {}
-            if (handshake > 0 && (now - handshake) < 180) active++;
-        }
-    }
-    return total;
-}
-
 }  // namespace
 
 std::string getStatusText() {
     double cpu = getCpuUsagePercent();
+    std::string loadAvg = getLoadAverage();
+    int cores = getCpuCoreCount();
     MemInfo mem = getMemInfo();
     DiskInfo disk = getDiskInfo();
     std::string uptime = getUptime();
-
-    int active = 0;
-    int totalPeers = countWireGuardPeers(active);
 
     char buf[1024];
     std::snprintf(buf, sizeof(buf),
         "\xF0\x9F\x9F\xA2 VPS онлайн\n"
         "Аптайм: %s\n\n"
-        "CPU: %.0f%%\n"
+        "CPU: %.0f%% (ядер: %d)\n"
+        "Нагрузка (1/5/15 мин): %s\n"
         "RAM: %.0f МБ / %.0f МБ\n"
-        "Диск: %.1f / %.1f ГБ\n\n"
-        "WireGuard:\n"
-        "Клиентов: %d\n"
-        "Активны: %d",
-        uptime.c_str(), cpu, mem.usedMb, mem.totalMb,
-        disk.usedGb, disk.totalGb, totalPeers, active);
+        "Диск: %.1f / %.1f ГБ",
+        uptime.c_str(), cpu, cores, loadAvg.c_str(), mem.usedMb, mem.totalMb,
+        disk.usedGb, disk.totalGb);
 
     return std::string(buf);
 }

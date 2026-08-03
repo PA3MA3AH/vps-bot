@@ -3,7 +3,8 @@
 
 namespace sysinfo {
 
-// Формирует готовый текст для команды /status
+// Формирует текст с CPU/RAM/диском/аптаймом (без данных WireGuard/Xray —
+// их добавляет main.cpp отдельно, т.к. они требуют своих модулей).
 std::string getStatusText();
 
 // Формирует текст для /logs <service>

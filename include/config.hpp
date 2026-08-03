@@ -12,10 +12,22 @@ struct WireGuardConfig {
     std::string clientsDir = "/etc/wireguard/clients";
 };
 
+struct XrayConfig {
+    bool configured = false;    // true, если секция "xray" вообще есть в config.json
+    std::string configPath = "/usr/local/etc/xray/config.json";
+    std::string endpoint;       // IP или домен сервера (без порта)
+    int port = 8443;
+    std::string publicKey;      // Reality public key (не приватный!)
+    std::string shortId;
+    std::string serverName;     // SNI, например "www.microsoft.com"
+    std::string clientsDir = "/etc/wireguard/clients";  // переиспользуем ту же папку под QR
+};
+
 struct AppConfig {
     std::string botToken;
     int64_t allowedUserId = 0;
     WireGuardConfig wg;
+    XrayConfig xray;
 
     // Читает config.json (путь по умолчанию — рядом с бинарником).
     static AppConfig load(const std::string& path);

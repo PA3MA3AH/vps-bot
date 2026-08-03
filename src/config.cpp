@@ -29,5 +29,17 @@ AppConfig AppConfig::load(const std::string& path) {
     cfg.wg.dns = wg.value("dns", "1.1.1.1");
     cfg.wg.clientsDir = wg.value("clients_dir", "/etc/wireguard/clients");
 
+    if (j.contains("xray")) {
+        const auto& x = j.at("xray");
+        cfg.xray.configured = true;
+        cfg.xray.configPath = x.value("config_path", "/usr/local/etc/xray/config.json");
+        cfg.xray.endpoint = x.value("endpoint", "");
+        cfg.xray.port = x.value("port", 8443);
+        cfg.xray.publicKey = x.value("public_key", "");
+        cfg.xray.shortId = x.value("short_id", "");
+        cfg.xray.serverName = x.value("server_name", "");
+        cfg.xray.clientsDir = x.value("clients_dir", "/etc/wireguard/clients");
+    }
+
     return cfg;
 }

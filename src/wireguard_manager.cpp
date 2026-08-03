@@ -2,9 +2,11 @@
 #include "shell_exec.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
+#include <future>
 #include <map>
 #include <sstream>
 #include <sys/stat.h>
@@ -89,24 +91,27 @@ std::string trimCopy(const std::string& s) {
     return s.substr(a, b - a + 1);
 }
 
+bool pingHost(const std::string& ip) {
+    // -c 1 (один пакет), -W 1 (таймаут 1 секунда ожидания ответа)
+    auto [code, out] = shell::run("ping -c 1 -W 1 " + ip + " > /dev/null 2>&1");
+    return code == 0;
+}
+
 }  // namespace
 
-std::string listClients(const WireGuardConfig& cfg) {
+std::vector<ClientStatus> getClientsStatus(const WireGuardConfig& cfg) {
+    std::vector<ClientStatus> result;
+
     auto names = readNamesByPubkey(cfg.configPath);
 
     auto [code, out] = shell::run("wg show " + cfg.interface + " dump");
     if (code != 0 || out.empty()) {
-        return "Не удалось получить данные WireGuard (проверьте права доступа / интерфейс).";
+        return result;
     }
 
     std::istringstream iss(out);
     std::string line;
     bool first = true;
-    std::ostringstream result;
-    int total = 0, active = 0;
-    long long now = static_cast<long long>(std::time(nullptr));
-
-    std::vector<std::string> rows;
 
     while (std::getline(iss, line)) {
         if (first) { first = false; continue; }  // первая строка = сам интерфейс
@@ -116,24 +121,55 @@ std::string listClients(const WireGuardConfig& cfg) {
         while (ls >> tok) f.push_back(tok);
         if (f.size() < 8) continue;
 
-        std::string pubkey = f[0];
+        ClientStatus c;
+        c.publicKey = f[0];
         std::string allowedIps = f[3];
-        long long handshake = 0;
-        try { handshake = std::stoll(f[4]); } catch (...) {}
-        bool isActive = handshake > 0 && (now - handshake) < 180;
+        // отрезаем "/32" и берём только первый адрес, если их несколько
+        auto commaPos = allowedIps.find(',');
+        if (commaPos != std::string::npos) allowedIps = allowedIps.substr(0, commaPos);
+        auto slashPos = allowedIps.find('/');
+        c.ip = (slashPos != std::string::npos) ? allowedIps.substr(0, slashPos) : allowedIps;
 
-        total++;
-        if (isActive) active++;
+        try { c.lastHandshake = std::stoll(f[4]); } catch (...) {}
+        c.name = names.count(c.publicKey) ? names[c.publicKey] : "(без имени)";
 
-        std::string name = names.count(pubkey) ? names[pubkey] : "(без имени)";
-        std::string status = isActive ? "\xF0\x9F\x9F\xA2" : "\xE2\x9A\xAA";
-
-        rows.push_back(status + " " + name + "  " + allowedIps);
+        result.push_back(c);
     }
 
-    result << "WireGuard: " << total << " клиентов, " << active << " активны\n\n";
-    for (auto& r : rows) result << r << "\n";
+    // Пингуем всех клиентов параллельно, чтобы не ждать N секунд подряд
+    std::vector<std::future<bool>> futures;
+    futures.reserve(result.size());
+    for (auto& c : result) {
+        futures.push_back(std::async(std::launch::async, pingHost, c.ip));
+    }
+    for (size_t i = 0; i < result.size(); ++i) {
+        result[i].online = futures[i].get();
+    }
+
+    return result;
+}
+
+std::string formatClientsList(const std::vector<ClientStatus>& clients) {
+    if (clients.empty()) {
+        return "Не удалось получить данные WireGuard, либо клиентов пока нет.";
+    }
+
+    int active = 0;
+    for (auto& c : clients) if (c.online) active++;
+
+    std::ostringstream result;
+    result << "WireGuard: " << clients.size() << " клиентов, " << active
+           << " онлайн (проверено пингом)\n\n";
+
+    for (auto& c : clients) {
+        std::string status = c.online ? "\xF0\x9F\x9F\xA2" : "\xE2\x9A\xAA";
+        result << status << " " << c.name << "  " << c.ip << "\n";
+    }
     return result.str();
+}
+
+std::string listClients(const WireGuardConfig& cfg) {
+    return formatClientsList(getClientsStatus(cfg));
 }
 
 AddResult addClient(const WireGuardConfig& cfg, const std::string& name) {
@@ -293,6 +329,95 @@ RemoveResult removeClient(const WireGuardConfig& cfg, const std::string& name) {
     // Удаляем файлы клиента
     shell::run("rm -f " + cfg.clientsDir + "/" + name + ".conf");
     shell::run("rm -f " + cfg.clientsDir + "/" + name + ".png");
+
+    res.ok = true;
+    return res;
+}
+
+RenameResult renameClient(const WireGuardConfig& cfg, const std::string& identifier,
+                           const std::string& newName) {
+    RenameResult res;
+
+    if (!shell::isSafeToken(newName)) {
+        res.error = "Новое имя может содержать только буквы, цифры, - и _ (до 64 символов).";
+        return res;
+    }
+    // identifier — это IP, поверяем базовый формат (цифры и точки)
+    for (char c : identifier) {
+        if (!std::isdigit(static_cast<unsigned char>(c)) && c != '.') {
+            res.error = "Идентификатор должен быть IP-адресом клиента, как в /wg (например 10.66.66.5).";
+            return res;
+        }
+    }
+
+    // Проверяем, что новое имя ещё не занято другим клиентом
+    auto names = readNamesByPubkey(cfg.configPath);
+    for (auto& [pk, n] : names) {
+        if (n == newName) {
+            res.error = "Имя '" + newName + "' уже используется другим клиентом.";
+            return res;
+        }
+    }
+
+    std::ifstream in(cfg.configPath);
+    if (!in.is_open()) {
+        res.error = "Не удалось открыть конфиг WireGuard.";
+        return res;
+    }
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line)) lines.push_back(line);
+    in.close();
+
+    // Ищем блок [Peer], содержащий нужный IP в AllowedIPs
+    int peerStart = -1, peerEnd = -1;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        if (trimCopy(lines[i]) != "[Peer]") continue;
+        size_t j = i + 1;
+        bool matches = false;
+        for (; j < lines.size(); ++j) {
+            std::string tj = trimCopy(lines[j]);
+            if (tj.rfind("AllowedIPs", 0) == 0 &&
+                tj.find(identifier + "/") != std::string::npos) {
+                matches = true;
+            }
+            if (j > i + 1 && (tj == "[Peer]" || tj == "[Interface]")) break;
+        }
+        if (matches) {
+            peerStart = static_cast<int>(i);
+            peerEnd = (j == lines.size()) ? static_cast<int>(lines.size()) - 1
+                                           : static_cast<int>(j) - 1;
+            break;
+        }
+    }
+
+    if (peerStart == -1) {
+        res.error = "Клиент с IP '" + identifier + "' не найден в конфиге.";
+        return res;
+    }
+
+    // Ищем существующую строку-комментарий с именем внутри блока
+    int commentLine = -1;
+    for (int i = peerStart + 1; i <= peerEnd; ++i) {
+        std::string t = trimCopy(lines[i]);
+        if (t.rfind("#", 0) == 0) {
+            commentLine = i;
+            res.oldName = trimCopy(t.substr(1));
+            break;
+        }
+        if (t.rfind("PublicKey", 0) == 0) break;  // дошли до ключа, комментария не было
+    }
+
+    if (commentLine != -1) {
+        lines[commentLine] = "# " + newName;
+    } else {
+        lines.insert(lines.begin() + peerStart + 1, "# " + newName);
+        res.oldName = "(без имени)";
+    }
+
+    std::ofstream out(cfg.configPath, std::ios::trunc);
+    for (auto& l : lines) out << l << "\n";
+    out.close();
 
     res.ok = true;
     return res;

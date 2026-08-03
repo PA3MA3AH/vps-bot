@@ -9,5 +9,14 @@
     "subnet_base": "10.0.0",
     "dns": "1.1.1.1",
     "clients_dir": "/etc/wireguard/clients"
+  },
+  "xray": {
+    "config_path": "/usr/local/etc/xray/config.json",
+    "endpoint": "your.server.ip",
+    "port": 8443,
+    "public_key": "REALITY_PUBLIC_KEY_HERE",
+    "short_id": "REALITY_SHORT_ID_HERE",
+    "server_name": "www.microsoft.com",
+    "clients_dir": "/etc/wireguard/clients"
   }
 }

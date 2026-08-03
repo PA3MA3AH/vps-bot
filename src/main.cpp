@@ -8,6 +8,7 @@
 #include "shell_exec.hpp"
 #include "system_info.hpp"
 #include "wireguard_manager.hpp"
+#include "xray_manager.hpp"
 
 using namespace TgBot;
 
@@ -45,10 +46,18 @@ int main() {
         if (!isAllowed(cfg, message)) return;
         bot.getApi().sendMessage(message->chat->id,
             "Бот управления VPS запущен.\n\n"
-            "/status — состояние сервера\n"
-            "/wg — список клиентов WireGuard\n"
+            "Статус:\n"
+            "/status — состояние сервера\n\n"
+            "WireGuard:\n"
+            "/wg — список клиентов (с проверкой пингом)\n"
             "/newclient <имя> — добавить клиента\n"
             "/deleteclient <имя> — удалить клиента\n"
+            "/rename <ip> <новое_имя> — переименовать клиента (ip — как в /wg)\n\n"
+            "VLESS/Reality (для Happ и т.п.):\n"
+            "/vless — список клиентов\n"
+            "/newvless <имя> — добавить клиента\n"
+            "/deletevless <имя> — удалить клиента\n\n"
+            "Прочее:\n"
             "/logs <сервис> — последние логи systemd-сервиса\n"
             "/update — обновление пакетов (с подтверждением)\n"
             "/reboot — перезагрузка сервера (с подтверждением)");
@@ -57,12 +66,31 @@ int main() {
     // ---- /status ----
     bot.getEvents().onCommand("status", [&](Message::Ptr message) {
         if (!isAllowed(cfg, message)) return;
-        bot.getApi().sendMessage(message->chat->id, sysinfo::getStatusText());
+
+        std::string text = sysinfo::getStatusText();
+
+        auto wgClients = wg::getClientsStatus(cfg.wg);
+        int wgOnline = 0;
+        for (auto& c : wgClients) if (c.online) wgOnline++;
+        text += "\n\nWireGuard: " + std::to_string(wgClients.size()) + " клиентов, " +
+                std::to_string(wgOnline) + " онлайн";
+
+        if (cfg.xray.configured) {
+            std::string xrayList = xray::listClients(cfg.xray);
+            // берём только первую строку с числом клиентов, без деталей
+            std::istringstream iss(xrayList);
+            std::string firstLine;
+            std::getline(iss, firstLine);
+            text += "\nVLESS/Reality: " + firstLine;
+        }
+
+        bot.getApi().sendMessage(message->chat->id, text);
     });
 
     // ---- /wg ----
     bot.getEvents().onCommand("wg", [&](Message::Ptr message) {
         if (!isAllowed(cfg, message)) return;
+        bot.getApi().sendMessage(message->chat->id, "Пингую клиентов...");
         bot.getApi().sendMessage(message->chat->id, wg::listClients(cfg.wg));
     });
 
@@ -115,6 +143,83 @@ int main() {
         auto result = wg::removeClient(cfg.wg, name);
         bot.getApi().sendMessage(message->chat->id,
             result.ok ? ("Клиент '" + name + "' удалён.") : ("Ошибка: " + result.error));
+    });
+
+    // ---- /rename <ip> <новое_имя> ----
+    bot.getEvents().onCommand("rename", [&](Message::Ptr message) {
+        if (!isAllowed(cfg, message)) return;
+
+        std::istringstream iss(message->text);
+        std::string cmd, ip, newName;
+        iss >> cmd >> ip >> newName;
+
+        if (ip.empty() || newName.empty()) {
+            bot.getApi().sendMessage(message->chat->id,
+                "Использование: /rename <ip> <новое_имя>\n"
+                "IP берите из вывода /wg, например: /rename 10.66.66.4 Ноутбук_Рабочий");
+            return;
+        }
+
+        auto result = wg::renameClient(cfg.wg, ip, newName);
+        if (!result.ok) {
+            bot.getApi().sendMessage(message->chat->id, "Ошибка: " + result.error);
+        } else {
+            bot.getApi().sendMessage(message->chat->id,
+                "Переименовано: '" + result.oldName + "' -> '" + newName + "'");
+        }
+    });
+
+    // ---- /vless (список клиентов Xray) ----
+    bot.getEvents().onCommand("vless", [&](Message::Ptr message) {
+        if (!isAllowed(cfg, message)) return;
+        bot.getApi().sendMessage(message->chat->id, xray::listClients(cfg.xray));
+    });
+
+    // ---- /newvless <имя> ----
+    bot.getEvents().onCommand("newvless", [&](Message::Ptr message) {
+        if (!isAllowed(cfg, message)) return;
+
+        std::istringstream iss(message->text);
+        std::string cmd, name;
+        iss >> cmd >> name;
+
+        if (name.empty()) {
+            bot.getApi().sendMessage(message->chat->id, "Использование: /newvless <имя>");
+            return;
+        }
+
+        bot.getApi().sendMessage(message->chat->id, "Создаю VLESS-клиента '" + name + "'...");
+        auto result = xray::addClient(cfg.xray, name);
+
+        if (!result.ok) {
+            bot.getApi().sendMessage(message->chat->id, "Ошибка: " + result.error);
+            return;
+        }
+
+        if (!result.qrPath.empty()) {
+            bot.getApi().sendPhoto(message->chat->id,
+                InputFile::fromFile(result.qrPath, "image/png"));
+        }
+        bot.getApi().sendMessage(message->chat->id,
+            "Клиент '" + name + "' создан.\n\nСсылка для импорта в Happ:\n" + result.link);
+    });
+
+    // ---- /deletevless <имя> ----
+    bot.getEvents().onCommand("deletevless", [&](Message::Ptr message) {
+        if (!isAllowed(cfg, message)) return;
+
+        std::istringstream iss(message->text);
+        std::string cmd, name;
+        iss >> cmd >> name;
+
+        if (name.empty()) {
+            bot.getApi().sendMessage(message->chat->id, "Использование: /deletevless <имя>");
+            return;
+        }
+
+        auto result = xray::removeClient(cfg.xray, name);
+        bot.getApi().sendMessage(message->chat->id,
+            result.ok ? ("VLESS-клиент '" + name + "' удалён.") : ("Ошибка: " + result.error));
     });
 
     // ---- /logs <сервис> ----
