@@ -1,0 +1,6 @@
+[Unit]
+Description=Send Telegram alert that vpsbot has failed
+
+[Service]
+Type=oneshot
+ExecStart=/opt/vpsbot/notify_down.sh

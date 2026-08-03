@@ -2,6 +2,11 @@
 Description=VPS Control Telegram Bot
 After=network-online.target wg-quick@wg0.service
 Wants=network-online.target
+# Если после нескольких попыток перезапуска сервис так и не поднялся —
+# считаем его "упавшим" и запускаем уведомитель (см. vpsbot-notify.service)
+OnFailure=vpsbot-notify.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
