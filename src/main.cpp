@@ -34,31 +34,16 @@ std::string formatAllClients(const AppConfig& cfg) {
 
     std::ostringstream out;
     out << "Клиенты: " << (wgClients.size() + xrayClients.size()) << "\n\n";
-    out << "WireGuard\n";
-    if (wgClients.empty()) {
-        out << "— клиентов нет или интерфейс недоступен\n";
-    } else {
-        for (const auto& client : wgClients) {
-            out << (client.online ? "[ON]" : "[OFF]") << " " << client.name
-                << " | WireGuard | " << client.ip << " | "
-                << (client.online ? "онлайн (ping)" : "нет ответа на ping") << "\n";
-        }
+    for (const auto& client : wgClients) {
+        out << (client.online ? "🟢" : "⚪") << " " << client.name
+            << " | WG | " << client.ip << "\n";
     }
-
-    out << "\nVLESS/Reality\n";
-    if (!cfg.xray.configured) {
-        out << "— Xray не настроен\n";
-    } else if (xrayClients.empty()) {
-        out << "— клиентов нет или конфиг Xray недоступен\n";
-    } else {
-        for (const auto& client : xrayClients) {
-            out << "[N/A] " << client.name
-                << " | VLESS/Reality | — | IP и ping не определяются\n";
-        }
+    for (const auto& client : xrayClients) {
+        out << "⚪ " << client.name << " | VL\n";
     }
-
-    out << "\nWireGuard проверяется ICMP-пингом. VLESS/Reality не выдаёт клиентам "
-           "внутренние IP, поэтому его нельзя пинговать как WireGuard.";
+    if (wgClients.empty() && xrayClients.empty()) {
+        out << "— клиентов нет\n";
+    }
     return out.str();
 }
 
