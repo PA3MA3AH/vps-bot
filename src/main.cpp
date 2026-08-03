@@ -28,6 +28,40 @@ std::string readFileToString(const std::string& path) {
     return ss.str();
 }
 
+std::string formatAllClients(const AppConfig& cfg) {
+    const auto wgClients = wg::getClientsStatus(cfg.wg);
+    const auto xrayClients = xray::getClientsStatus(cfg.xray);
+
+    std::ostringstream out;
+    out << "Клиенты: " << (wgClients.size() + xrayClients.size()) << "\n\n";
+    out << "WireGuard\n";
+    if (wgClients.empty()) {
+        out << "— клиентов нет или интерфейс недоступен\n";
+    } else {
+        for (const auto& client : wgClients) {
+            out << (client.online ? "[ON]" : "[OFF]") << " " << client.name
+                << " | WireGuard | " << client.ip << " | "
+                << (client.online ? "онлайн (ping)" : "нет ответа на ping") << "\n";
+        }
+    }
+
+    out << "\nVLESS/Reality\n";
+    if (!cfg.xray.configured) {
+        out << "— Xray не настроен\n";
+    } else if (xrayClients.empty()) {
+        out << "— клиентов нет или конфиг Xray недоступен\n";
+    } else {
+        for (const auto& client : xrayClients) {
+            out << "[N/A] " << client.name
+                << " | VLESS/Reality | — | IP и ping не определяются\n";
+        }
+    }
+
+    out << "\nWireGuard проверяется ICMP-пингом. VLESS/Reality не выдаёт клиентам "
+           "внутренние IP, поэтому его нельзя пинговать как WireGuard.";
+    return out.str();
+}
+
 }  // namespace
 
 int main() {
@@ -46,17 +80,16 @@ int main() {
         if (!isAllowed(cfg, message)) return;
         bot.getApi().sendMessage(message->chat->id,
             "Бот управления VPS запущен.\n\n"
-            "Статус:\n"
-            "/status — состояние сервера\n\n"
-            "WireGuard:\n"
-            "/wg — список клиентов (с проверкой пингом)\n"
-            "/newclient <имя> — добавить клиента\n"
-            "/deleteclient <имя> — удалить клиента\n"
-            "/rename <ip> <новое_имя> — переименовать клиента (ip — как в /wg)\n\n"
-            "VLESS/Reality (для Happ и т.п.):\n"
-            "/vless — список клиентов\n"
-            "/newvless <имя> — добавить клиента\n"
-            "/deletevless <имя> — удалить клиента\n\n"
+             "Статус:\n"
+             "/status — состояние сервера\n"
+             "/list — общий список WireGuard и VLESS/Reality\n\n"
+             "WireGuard:\n"
+             "/newclient <имя> — добавить клиента\n"
+             "/deleteclient <имя> — удалить клиента\n"
+             "/rename <ip> <новое_имя> — переименовать клиента (ip — как в /list)\n\n"
+             "VLESS/Reality (для Happ и т.п.):\n"
+             "/newvless <имя> — добавить клиента\n"
+             "/deletevless <имя> — удалить клиента\n\n"
             "Прочее:\n"
             "/logs <сервис> — последние логи systemd-сервиса\n"
             "/update — обновление пакетов (с подтверждением)\n"
@@ -87,11 +120,11 @@ int main() {
         bot.getApi().sendMessage(message->chat->id, text);
     });
 
-    // ---- /wg ----
-    bot.getEvents().onCommand("wg", [&](Message::Ptr message) {
+    // ---- /list ----
+    bot.getEvents().onCommand("list", [&](Message::Ptr message) {
         if (!isAllowed(cfg, message)) return;
-        bot.getApi().sendMessage(message->chat->id, "Пингую клиентов...");
-        bot.getApi().sendMessage(message->chat->id, wg::listClients(cfg.wg));
+        bot.getApi().sendMessage(message->chat->id, "Проверяю клиентов WireGuard...");
+        bot.getApi().sendMessage(message->chat->id, formatAllClients(cfg));
     });
 
     // ---- /newclient <имя> ----
@@ -156,7 +189,7 @@ int main() {
         if (ip.empty() || newName.empty()) {
             bot.getApi().sendMessage(message->chat->id,
                 "Использование: /rename <ip> <новое_имя>\n"
-                "IP берите из вывода /wg, например: /rename 10.66.66.4 Ноутбук_Рабочий");
+                "IP берите из вывода /list, например: /rename 10.66.66.4 Ноутбук_Рабочий");
             return;
         }
 
@@ -167,12 +200,6 @@ int main() {
             bot.getApi().sendMessage(message->chat->id,
                 "Переименовано: '" + result.oldName + "' -> '" + newName + "'");
         }
-    });
-
-    // ---- /vless (список клиентов Xray) ----
-    bot.getEvents().onCommand("vless", [&](Message::Ptr message) {
-        if (!isAllowed(cfg, message)) return;
-        bot.getApi().sendMessage(message->chat->id, xray::listClients(cfg.xray));
     });
 
     // ---- /newvless <имя> ----

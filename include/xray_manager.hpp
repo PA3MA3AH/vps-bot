@@ -18,7 +18,17 @@ struct RemoveResult {
     std::string error;
 };
 
-// Список текущих клиентов Xray (для /vless)
+// У VLESS/Reality нет выдаваемого сервером внутреннего IP, поэтому
+// онлайн-статус нельзя корректно определить ICMP-пингом как у WireGuard.
+struct ClientStatus {
+    std::string name;
+    std::string id;
+};
+
+// Возвращает структурированный список клиентов первого VLESS-инбаунда.
+std::vector<ClientStatus> getClientsStatus(const XrayConfig& cfg);
+
+// Отдельный текстовый список клиентов Xray для внутреннего использования.
 std::string listClients(const XrayConfig& cfg);
 
 // Добавляет клиента: генерирует UUID, дописывает в inbounds[0].settings.clients

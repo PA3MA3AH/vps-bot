@@ -22,7 +22,7 @@ std::vector<ClientStatus> getClientsStatus(const WireGuardConfig& cfg);
 // Форматирует список клиентов в текст для Telegram
 std::string formatClientsList(const std::vector<ClientStatus>& clients);
 
-// Удобный шорткат для /wg
+// Удобный шорткат для форматирования отдельного списка WireGuard.
 std::string listClients(const WireGuardConfig& cfg);
 
 // Добавляет нового клиента: генерирует ключи, добавляет peer в конфиг,
@@ -44,7 +44,7 @@ struct RemoveResult {
 RemoveResult removeClient(const WireGuardConfig& cfg, const std::string& name);
 
 // Переименовывает существующего клиента. identifier — это его IP
-// (например "10.66.66.5", как показано в /wg), т.к. это единственное,
+// (например "10.66.66.5", как показано в /list), т.к. это единственное,
 // что гарантированно есть у любого пира, даже у добавленных вручную без
 // имени. Если у пира уже был комментарий с именем — заменяет его, если
 // не было (частый случай для клиентов, настроенных руками) — добавляет.

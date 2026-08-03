@@ -15,6 +15,15 @@ set -euo pipefail
 PORT="${1:-8443}"
 SNI="${2:-www.microsoft.com}"
 
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
+    echo "Порт должен быть числом от 1 до 65535." >&2
+    exit 1
+fi
+if ! [[ "$SNI" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]]; then
+    echo "SNI должен быть корректным доменным именем." >&2
+    exit 1
+fi
+
 if [ "$(id -u)" -ne 0 ]; then
     echo "Запустите скрипт от root (sudo)." >&2
     exit 1
@@ -55,7 +64,7 @@ cat > /usr/local/etc/xray/config.json << EOF
         "security": "reality",
         "realitySettings": {
           "show": false,
-          "dest": "${SNI}:443",
+          "target": "${SNI}:443",
           "xver": 0,
           "serverNames": ["${SNI}"],
           "privateKey": "${PRIVATE_KEY}",
@@ -65,7 +74,11 @@ cat > /usr/local/etc/xray/config.json << EOF
     }
   ],
   "outbounds": [
-    { "protocol": "freedom", "tag": "direct" }
+    {
+      "protocol": "freedom",
+      "tag": "direct",
+      "settings": { "domainStrategy": "UseIPv4" }
+    }
   ]
 }
 EOF
@@ -75,11 +88,14 @@ if command -v ufw > /dev/null 2>&1; then
     ufw allow "${PORT}/tcp" || true
 fi
 
+echo "==> Проверяю конфигурацию Xray..."
+/usr/local/bin/xray run -test -c /usr/local/etc/xray/config.json
+
 echo "==> Запускаю Xray..."
 systemctl enable xray
 systemctl restart xray
-sleep 1
-systemctl --no-pager status xray | head -5
+systemctl is-active --quiet xray
+printf 'Xray запущен.\n'
 
 SERVER_IP=$(curl -s -4 ifconfig.me || hostname -I | awk '{print $1}')
 

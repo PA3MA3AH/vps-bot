@@ -52,19 +52,54 @@ std::string generateUuid() {
     return uuid;
 }
 
-std::string urlEncodeMinimal(const std::string& s) {
-    // Имена у нас и так ограничены [A-Za-z0-9_-] (см. shell::isSafeToken),
-    // поэтому полноценный percent-encoding не требуется — просто
-    // подстраховываемся на случай пробелов.
+std::string urlEncode(const std::string& s) {
+    static constexpr char hex[] = "0123456789ABCDEF";
     std::string out;
-    for (char c : s) {
-        if (c == ' ') out += "%20";
-        else out += c;
+    for (unsigned char c : s) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+            c == '.' || c == '~') {
+            out += static_cast<char>(c);
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 0x0F];
+        }
     }
     return out;
 }
 
+std::string formatEndpoint(const std::string& endpoint) {
+    // IPv6-адрес в URI обязан быть заключён в квадратные скобки.
+    if (endpoint.find(':') != std::string::npos &&
+        (endpoint.front() != '[' || endpoint.back() != ']')) {
+        return "[" + endpoint + "]";
+    }
+    return endpoint;
+}
+
 }  // namespace
+
+std::vector<ClientStatus> getClientsStatus(const XrayConfig& cfg) {
+    std::vector<ClientStatus> result;
+    if (!cfg.configured) return result;
+
+    try {
+        json j = readConfig(cfg.configPath);
+        auto& clients = clientsArray(j);
+        result.reserve(clients.size());
+        for (const auto& client : clients) {
+            result.push_back({
+                client.value("email", "(без имени)"),
+                client.value("id", "")
+            });
+        }
+    } catch (const std::exception&) {
+        // Единый список остаётся доступным даже если конфиг Xray временно
+        // недоступен. Детальное сообщение возвращает listClients().
+    }
+    return result;
+}
 
 std::string listClients(const XrayConfig& cfg) {
     if (!cfg.configured) {
@@ -75,27 +110,19 @@ std::string listClients(const XrayConfig& cfg) {
     json j;
     try {
         j = readConfig(cfg.configPath);
-    } catch (const std::exception& e) {
-        return std::string("Не удалось прочитать конфиг Xray: ") + e.what();
-    }
-
-    try {
         auto& clients = clientsArray(j);
-        if (clients.empty()) {
-            return "VLESS/Reality: клиентов пока нет.";
-        }
+        if (clients.empty()) return "VLESS/Reality: клиентов пока нет.";
+
         std::ostringstream out;
         out << "VLESS/Reality: " << clients.size() << " клиентов\n\n";
-        for (auto& c : clients) {
-            std::string email = c.value("email", "(без имени)");
-            out << "\xE2\x9A\xAA " << email << "\n";
+        for (const auto& client : clients) {
+            out << "\xE2\x9A\xAA " << client.value("email", "(без имени)") << "\n";
         }
-        out << "\n(онлайн-статус для VLESS не отслеживается — в отличие от "
-               "WireGuard тут нет простого способа проверить, кто активен "
-               "прямо сейчас, не заглядывая в логи соединений)";
+        out << "\n(у VLESS/Reality нет внутреннего IP: ICMP-пинг и онлайн-статус "
+                "для клиентов не определяются без отдельной телеметрии Xray)";
         return out.str();
     } catch (const std::exception& e) {
-        return std::string("Ошибка структуры конфига Xray: ") + e.what();
+        return std::string("Не удалось прочитать конфиг Xray: ") + e.what();
     }
 }
 
@@ -161,11 +188,12 @@ AddResult addClient(const XrayConfig& cfg, const std::string& name) {
         }
 
         std::ostringstream link;
-        link << "vless://" << uuid << "@" << cfg.endpoint << ":" << cfg.port
+        link << "vless://" << uuid << "@" << formatEndpoint(cfg.endpoint) << ":" << cfg.port
              << "?encryption=none&flow=xtls-rprx-vision&security=reality"
-             << "&sni=" << cfg.serverName << "&fp=chrome&pbk=" << cfg.publicKey
-             << "&sid=" << cfg.shortId << "&type=tcp&headerType=none"
-             << "#" << urlEncodeMinimal(name);
+             << "&sni=" << urlEncode(cfg.serverName) << "&fp=chrome&pbk="
+             << urlEncode(cfg.publicKey) << "&sid=" << urlEncode(cfg.shortId)
+             << "&spx=%2F&type=tcp"
+             << "#" << urlEncode(name);
 
         shell::run("mkdir -p " + cfg.clientsDir);
         std::string qrPath = cfg.clientsDir + "/vless_" + name + ".png";

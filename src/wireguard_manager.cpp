@@ -345,7 +345,7 @@ RenameResult renameClient(const WireGuardConfig& cfg, const std::string& identif
     // identifier — это IP, поверяем базовый формат (цифры и точки)
     for (char c : identifier) {
         if (!std::isdigit(static_cast<unsigned char>(c)) && c != '.') {
-            res.error = "Идентификатор должен быть IP-адресом клиента, как в /wg (например 10.66.66.5).";
+            res.error = "Идентификатор должен быть IP-адресом клиента, как в /list (например 10.66.66.5).";
             return res;
         }
     }
