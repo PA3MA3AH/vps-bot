@@ -27,8 +27,8 @@ mkdir -p /usr/local/etc/xray
 
 echo "==> Генерирую ключи Reality..."
 KEY_OUTPUT=$(/usr/local/bin/xray x25519)
-PRIVATE_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/Private key/{print $2}')
-PUBLIC_KEY=$(echo "$KEY_OUTPUT" | awk -F': ' '/Public key/{print $2}')
+PRIVATE_KEY=$(echo "$KEY_OUTPUT" | grep -iE "Private ?Key" | sed 's/^[^:]*: *//')
+PUBLIC_KEY=$(echo "$KEY_OUTPUT" | grep -iE "Public ?Key" | sed 's/^[^:]*: *//')
 
 if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
     echo "Не удалось сгенерировать ключи Reality (неожиданный вывод xray x25519)." >&2
