@@ -78,6 +78,23 @@ std::string formatEndpoint(const std::string& endpoint) {
     return endpoint;
 }
 
+std::string buildVlessLink(const XrayConfig& cfg, const std::string& uuid,
+                           const std::string& name) {
+    std::ostringstream link;
+    link << "vless://" << uuid << "@" << formatEndpoint(cfg.endpoint) << ":" << cfg.port
+         << "?encryption=none&flow=xtls-rprx-vision&security=reality"
+         << "&sni=" << urlEncode(cfg.serverName) << "&fp=chrome&pbk="
+         << urlEncode(cfg.publicKey) << "&sid=" << urlEncode(cfg.shortId)
+         << "&spx=%2F&type=tcp"
+         << "#" << urlEncode(name);
+    return link.str();
+}
+
+bool hasLinkSettings(const XrayConfig& cfg) {
+    return !cfg.publicKey.empty() && !cfg.shortId.empty() &&
+           !cfg.serverName.empty() && !cfg.endpoint.empty() && cfg.port > 0;
+}
+
 }  // namespace
 
 std::vector<ClientStatus> getClientsStatus(const XrayConfig& cfg) {
@@ -139,9 +156,8 @@ AddResult addClient(const XrayConfig& cfg, const std::string& name) {
         res.error = "Имя может содержать только буквы, цифры, - и _ (до 64 символов).";
         return res;
     }
-    if (cfg.publicKey.empty() || cfg.serverName.empty() || cfg.endpoint.empty()) {
-        res.error = "В config.json не заполнены xray.public_key / xray.server_name / "
-                    "xray.endpoint — их выдаёт scripts/install_xray.sh при установке.";
+    if (!hasLinkSettings(cfg)) {
+        res.error = "В config.json не заполнены параметры xray для формирования ссылки.";
         return res;
     }
 
@@ -187,27 +203,69 @@ AddResult addClient(const XrayConfig& cfg, const std::string& name) {
             return res;
         }
 
-        std::ostringstream link;
-        link << "vless://" << uuid << "@" << formatEndpoint(cfg.endpoint) << ":" << cfg.port
-             << "?encryption=none&flow=xtls-rprx-vision&security=reality"
-             << "&sni=" << urlEncode(cfg.serverName) << "&fp=chrome&pbk="
-             << urlEncode(cfg.publicKey) << "&sid=" << urlEncode(cfg.shortId)
-             << "&spx=%2F&type=tcp"
-             << "#" << urlEncode(name);
+        std::string linkText = buildVlessLink(cfg, uuid, name);
 
         shell::run("mkdir -p " + cfg.clientsDir);
         std::string qrPath = cfg.clientsDir + "/vless_" + name + ".png";
         auto [qrCode, qrOut] = shell::run(
-            "qrencode -t png -o " + qrPath + " \"" + link.str() + "\"");
+            "qrencode -t png -o " + qrPath + " \"" + linkText + "\"");
+        if (qrCode == 0) chmod(qrPath.c_str(), S_IRUSR | S_IWUSR);
 
         res.ok = true;
-        res.link = link.str();
+        res.link = linkText;
         res.qrPath = (qrCode == 0) ? qrPath : "";
         return res;
     } catch (const std::exception& e) {
         res.error = std::string("Ошибка структуры конфига Xray: ") + e.what();
         return res;
     }
+}
+
+GetLinkResult getClientLink(const XrayConfig& cfg, const std::string& name) {
+    GetLinkResult res;
+    res.clientName = name;
+    if (!cfg.configured) {
+        res.error = "Xray не настроен в config.json бота.";
+        return res;
+    }
+    if (!shell::isSafeToken(name)) {
+        res.error = "Недопустимое имя клиента.";
+        return res;
+    }
+    if (!hasLinkSettings(cfg)) {
+        res.error = "В config.json не заполнены параметры xray для формирования ссылки.";
+        return res;
+    }
+
+    try {
+        json j = readConfig(cfg.configPath);
+        auto& clients = clientsArray(j);
+        for (const auto& client : clients) {
+            if (client.value("email", "") != name) continue;
+            const std::string uuid = client.value("id", "");
+            if (uuid.empty()) {
+                res.error = "У VLESS-клиента '" + name + "' отсутствует UUID в конфиге Xray.";
+                return res;
+            }
+
+            res.link = buildVlessLink(cfg, uuid, name);
+            shell::run("mkdir -p " + cfg.clientsDir);
+            res.qrPath = cfg.clientsDir + "/vless_" + name + ".png";
+            auto [qrCode, qrOut] = shell::run(
+                "qrencode -t png -o " + res.qrPath + " \"" + res.link + "\"");
+            if (qrCode != 0) {
+                res.error = "Не удалось создать QR-код: " + qrOut;
+                return res;
+            }
+            chmod(res.qrPath.c_str(), S_IRUSR | S_IWUSR);
+            res.ok = true;
+            return res;
+        }
+        res.error = "VLESS-клиент '" + name + "' не найден.";
+    } catch (const std::exception& e) {
+        res.error = std::string("Не удалось прочитать конфиг Xray: ") + e.what();
+    }
+    return res;
 }
 
 RemoveResult removeClient(const XrayConfig& cfg, const std::string& name) {

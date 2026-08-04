@@ -9,14 +9,12 @@ struct ClientStatus {
     std::string name;
     std::string ip;          // без /32
     std::string publicKey;
-    bool online = false;     // определяется реальным ICMP-пингом на ip
+    bool online = false;     // recent handshake, а не ping
     long long lastHandshake = 0;  // unix-время, 0 если не было
 };
 
 // Опрашивает `wg show <iface> dump`, сопоставляет имена из комментариев
-// конфига и параллельно пингует каждого клиента по его внутреннему IP,
-// чтобы определить, онлайн ли он прямо сейчас (а не просто "был онлайн
-// когда-то за последние N минут" по handshake).
+// конфига и определяет online по свежести latest-handshake.
 std::vector<ClientStatus> getClientsStatus(const WireGuardConfig& cfg);
 
 // Форматирует список клиентов в текст для Telegram
@@ -24,6 +22,16 @@ std::string formatClientsList(const std::vector<ClientStatus>& clients);
 
 // Удобный шорткат для форматирования отдельного списка WireGuard.
 std::string listClients(const WireGuardConfig& cfg);
+
+// Возвращает уже существующий .conf и QR клиента по имени (без регенерации ключей).
+struct GetConfigResult {
+    bool ok = false;
+    std::string error;
+    std::string confPath;
+    std::string qrPath;
+    std::string clientName;
+};
+GetConfigResult getClientConfig(const WireGuardConfig& cfg, const std::string& name);
 
 // Добавляет нового клиента: генерирует ключи, добавляет peer в конфиг,
 // применяет через `wg set`, создаёт .conf и QR-код.

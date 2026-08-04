@@ -70,10 +70,12 @@ int main() {
              "/list — общий список WireGuard и VLESS/Reality\n\n"
              "WireGuard:\n"
              "/newclient <имя> — добавить клиента\n"
+             "/getwg <имя> — получить сохранённые конфиг и QR\n"
              "/deleteclient <имя> — удалить клиента\n"
              "/rename <ip> <новое_имя> — переименовать клиента (ip — как в /list)\n\n"
              "VLESS/Reality (для Happ и т.п.):\n"
              "/newvless <имя> — добавить клиента\n"
+             "/getvl <имя> — получить ссылку и QR повторно\n"
              "/deletevless <имя> — удалить клиента\n\n"
             "Прочее:\n"
             "/logs <сервис> — последние логи systemd-сервиса\n"
@@ -108,7 +110,7 @@ int main() {
     // ---- /list ----
     bot.getEvents().onCommand("list", [&](Message::Ptr message) {
         if (!isAllowed(cfg, message)) return;
-        bot.getApi().sendMessage(message->chat->id, "Проверяю клиентов WireGuard...");
+        bot.getApi().sendMessage(message->chat->id, "Получаю список клиентов...");
         bot.getApi().sendMessage(message->chat->id, formatAllClients(cfg));
     });
 
@@ -143,6 +145,30 @@ int main() {
 
         bot.getApi().sendMessage(message->chat->id,
             "Клиент '" + name + "' успешно создан и добавлен в WireGuard.");
+    });
+
+    // ---- /getwg <имя> ----
+    bot.getEvents().onCommand("getwg", [&](Message::Ptr message) {
+        if (!isAllowed(cfg, message)) return;
+        std::istringstream iss(message->text);
+        std::string cmd, name;
+        iss >> cmd >> name;
+        if (name.empty()) {
+            bot.getApi().sendMessage(message->chat->id, "Использование: /getwg <имя>");
+            return;
+        }
+
+        auto result = wg::getClientConfig(cfg.wg, name);
+        if (!result.ok) {
+            bot.getApi().sendMessage(message->chat->id, "Ошибка: " + result.error);
+            return;
+        }
+        bot.getApi().sendDocument(message->chat->id,
+            InputFile::fromFile(result.confPath, "application/octet-stream"));
+        if (!result.qrPath.empty()) {
+            bot.getApi().sendPhoto(message->chat->id,
+                InputFile::fromFile(result.qrPath, "image/png"));
+        }
     });
 
     // ---- /deleteclient <имя> ----
@@ -214,6 +240,28 @@ int main() {
         }
         bot.getApi().sendMessage(message->chat->id,
             "Клиент '" + name + "' создан.\n\nСсылка для импорта в Happ:\n" + result.link);
+    });
+
+    // ---- /getvl <имя> ----
+    bot.getEvents().onCommand("getvl", [&](Message::Ptr message) {
+        if (!isAllowed(cfg, message)) return;
+        std::istringstream iss(message->text);
+        std::string cmd, name;
+        iss >> cmd >> name;
+        if (name.empty()) {
+            bot.getApi().sendMessage(message->chat->id, "Использование: /getvl <имя>");
+            return;
+        }
+
+        auto result = xray::getClientLink(cfg.xray, name);
+        if (!result.ok) {
+            bot.getApi().sendMessage(message->chat->id, "Ошибка: " + result.error);
+            return;
+        }
+        bot.getApi().sendPhoto(message->chat->id,
+            InputFile::fromFile(result.qrPath, "image/png"));
+        bot.getApi().sendMessage(message->chat->id,
+            "Ссылка для '" + name + "':\n" + result.link);
     });
 
     // ---- /deletevless <имя> ----

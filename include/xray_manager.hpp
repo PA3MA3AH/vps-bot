@@ -18,6 +18,14 @@ struct RemoveResult {
     std::string error;
 };
 
+struct GetLinkResult {
+    bool ok = false;
+    std::string error;
+    std::string link;
+    std::string qrPath;
+    std::string clientName;
+};
+
 // У VLESS/Reality нет выдаваемого сервером внутреннего IP, поэтому
 // онлайн-статус нельзя корректно определить ICMP-пингом как у WireGuard.
 struct ClientStatus {
@@ -34,6 +42,10 @@ std::string listClients(const XrayConfig& cfg);
 // Добавляет клиента: генерирует UUID, дописывает в inbounds[0].settings.clients
 // конфига Xray, перезапускает сервис, формирует vless:// ссылку и QR-код.
 AddResult addClient(const XrayConfig& cfg, const std::string& name);
+
+// Повторно формирует ссылку и QR существующего VLESS-клиента без изменения
+// Xray config и без перезапуска сервиса.
+GetLinkResult getClientLink(const XrayConfig& cfg, const std::string& name);
 
 // Удаляет клиента по имени (полю "email" в конфиге Xray).
 RemoveResult removeClient(const XrayConfig& cfg, const std::string& name);

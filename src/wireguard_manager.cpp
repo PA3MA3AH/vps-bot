@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <ctime>
 #include <fstream>
-#include <future>
 #include <map>
 #include <sstream>
 #include <sys/stat.h>
@@ -91,11 +90,7 @@ std::string trimCopy(const std::string& s) {
     return s.substr(a, b - a + 1);
 }
 
-bool pingHost(const std::string& ip) {
-    // -c 1 (один пакет), -W 1 (таймаут 1 секунда ожидания ответа)
-    auto [code, out] = shell::run("ping -c 1 -W 1 " + ip + " > /dev/null 2>&1");
-    return code == 0;
-}
+constexpr long long kOnlineHandshakeMaxAgeSec = 180;
 
 }  // namespace
 
@@ -131,19 +126,12 @@ std::vector<ClientStatus> getClientsStatus(const WireGuardConfig& cfg) {
         c.ip = (slashPos != std::string::npos) ? allowedIps.substr(0, slashPos) : allowedIps;
 
         try { c.lastHandshake = std::stoll(f[4]); } catch (...) {}
+        const long long now = std::time(nullptr);
+        c.online = c.lastHandshake > 0 && now >= c.lastHandshake &&
+                   now - c.lastHandshake <= kOnlineHandshakeMaxAgeSec;
         c.name = names.count(c.publicKey) ? names[c.publicKey] : "(без имени)";
 
         result.push_back(c);
-    }
-
-    // Пингуем всех клиентов параллельно, чтобы не ждать N секунд подряд
-    std::vector<std::future<bool>> futures;
-    futures.reserve(result.size());
-    for (auto& c : result) {
-        futures.push_back(std::async(std::launch::async, pingHost, c.ip));
-    }
-    for (size_t i = 0; i < result.size(); ++i) {
-        result[i].online = futures[i].get();
     }
 
     return result;
@@ -159,7 +147,7 @@ std::string formatClientsList(const std::vector<ClientStatus>& clients) {
 
     std::ostringstream result;
     result << "WireGuard: " << clients.size() << " клиентов, " << active
-           << " онлайн (проверено пингом)\n\n";
+           << " онлайн (handshake ≤ 3 мин)\n\n";
 
     for (auto& c : clients) {
         std::string status = c.online ? "\xF0\x9F\x9F\xA2" : "\xE2\x9A\xAA";
@@ -170,6 +158,49 @@ std::string formatClientsList(const std::vector<ClientStatus>& clients) {
 
 std::string listClients(const WireGuardConfig& cfg) {
     return formatClientsList(getClientsStatus(cfg));
+}
+
+GetConfigResult getClientConfig(const WireGuardConfig& cfg, const std::string& name) {
+    GetConfigResult res;
+    res.clientName = name;
+    if (!shell::isSafeToken(name)) {
+        res.error = "Недопустимое имя клиента.";
+        return res;
+    }
+
+    const auto names = readNamesByPubkey(cfg.configPath);
+    const bool exists = std::any_of(names.begin(), names.end(), [&](const auto& entry) {
+        return entry.second == name;
+    });
+    if (!exists) {
+        res.error = "Клиент '" + name + "' не найден в конфиге WireGuard.";
+        return res;
+    }
+
+    const std::string confPath = cfg.clientsDir + "/" + name + ".conf";
+    std::ifstream conf(confPath);
+    if (!conf.good()) {
+        res.error = "Сохранённый .conf не найден. Восстановить приватный ключ невозможно; "
+                    "создайте нового клиента.";
+        return res;
+    }
+    conf.close();
+
+    const std::string qrPath = cfg.clientsDir + "/" + name + ".png";
+    std::ifstream qr(qrPath, std::ios::binary);
+    if (!qr.good()) {
+        auto [qrCode, qrOut] = shell::run("qrencode -t png -r " + confPath + " -o " + qrPath);
+        if (qrCode != 0) {
+            res.error = "Не удалось создать QR-код: " + qrOut;
+            return res;
+        }
+        chmod(qrPath.c_str(), S_IRUSR | S_IWUSR);
+    }
+
+    res.ok = true;
+    res.confPath = confPath;
+    res.qrPath = qrPath;
+    return res;
 }
 
 AddResult addClient(const WireGuardConfig& cfg, const std::string& name) {
