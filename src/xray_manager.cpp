@@ -95,6 +95,30 @@ bool hasLinkSettings(const XrayConfig& cfg) {
            !cfg.serverName.empty() && !cfg.endpoint.empty() && cfg.port > 0;
 }
 
+std::string yamlQuote(const std::string& value) {
+    std::string out = "\"";
+    for (unsigned char c : value) {
+        switch (c) {
+        case '\\': out += "\\\\"; break;
+        case '"': out += "\\\""; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (c < 0x20) {
+                static constexpr char hex[] = "0123456789abcdef";
+                out += "\\x";
+                out += hex[c >> 4];
+                out += hex[c & 0x0F];
+            } else {
+                out += static_cast<char>(c);
+            }
+        }
+    }
+    out += '"';
+    return out;
+}
+
 }  // namespace
 
 std::vector<ClientStatus> getClientsStatus(const XrayConfig& cfg) {
@@ -258,6 +282,83 @@ GetLinkResult getClientLink(const XrayConfig& cfg, const std::string& name) {
                 return res;
             }
             chmod(res.qrPath.c_str(), S_IRUSR | S_IWUSR);
+            res.ok = true;
+            return res;
+        }
+        res.error = "VLESS-клиент '" + name + "' не найден.";
+    } catch (const std::exception& e) {
+        res.error = std::string("Не удалось прочитать конфиг Xray: ") + e.what();
+    }
+    return res;
+}
+
+GetProfileResult getClashProfile(const XrayConfig& cfg, const std::string& name) {
+    GetProfileResult res;
+    res.clientName = name;
+    if (!cfg.configured) {
+        res.error = "Xray не настроен в config.json бота.";
+        return res;
+    }
+    if (!shell::isSafeToken(name)) {
+        res.error = "Недопустимое имя клиента.";
+        return res;
+    }
+    if (!hasLinkSettings(cfg)) {
+        res.error = "В config.json не заполнены параметры xray для формирования профиля.";
+        return res;
+    }
+
+    try {
+        json j = readConfig(cfg.configPath);
+        auto& clients = clientsArray(j);
+        for (const auto& client : clients) {
+            if (client.value("email", "") != name) continue;
+            const std::string uuid = client.value("id", "");
+            if (uuid.empty()) {
+                res.error = "У VLESS-клиента '" + name + "' отсутствует UUID.";
+                return res;
+            }
+
+            std::ostringstream yaml;
+            yaml << "proxies:\n"
+                 << "  - name: " << yamlQuote(name) << "\n"
+                 << "    type: vless\n"
+                 << "    server: " << yamlQuote(cfg.endpoint) << "\n"
+                 << "    port: " << cfg.port << "\n"
+                 << "    uuid: " << yamlQuote(uuid) << "\n"
+                 << "    encryption: \"\"\n"
+                 << "    flow: xtls-rprx-vision\n"
+                 << "    network: tcp\n"
+                 << "    udp: true\n"
+                 << "    tls: true\n"
+                 << "    servername: " << yamlQuote(cfg.serverName) << "\n"
+                 << "    client-fingerprint: chrome\n"
+                 << "    reality-opts:\n"
+                 << "      public-key: " << yamlQuote(cfg.publicKey) << "\n"
+                 << "      short-id: " << yamlQuote(cfg.shortId) << "\n\n"
+                 << "proxy-groups:\n"
+                 << "  - name: Proxy\n"
+                 << "    type: select\n"
+                 << "    proxies:\n"
+                 << "      - " << yamlQuote(name) << "\n"
+                 << "      - DIRECT\n\n"
+                 << "rules:\n"
+                 << "  - MATCH,Proxy\n";
+
+            shell::run("mkdir -p " + cfg.clientsDir);
+            res.profilePath = cfg.clientsDir + "/clash_" + name + ".yaml";
+            std::ofstream out(res.profilePath, std::ios::trunc);
+            if (!out.is_open()) {
+                res.error = "Не удалось записать Clash-профиль.";
+                return res;
+            }
+            out << yaml.str();
+            out.close();
+            if (!out.good()) {
+                res.error = "Ошибка записи Clash-профиля.";
+                return res;
+            }
+            chmod(res.profilePath.c_str(), S_IRUSR | S_IWUSR);
             res.ok = true;
             return res;
         }

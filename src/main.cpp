@@ -1,5 +1,6 @@
 #include <tgbot/tgbot.h>
 
+#include <cstdio>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -76,6 +77,7 @@ int main() {
              "VLESS/Reality (для Happ и т.п.):\n"
              "/newvless <имя> — добавить клиента\n"
              "/getvl <имя> — получить ссылку и QR повторно\n"
+             "/getclash <имя> — получить YAML для Clash Verge\n"
              "/deletevless <имя> — удалить клиента\n\n"
             "Прочее:\n"
             "/logs <сервис> — последние логи systemd-сервиса\n"
@@ -262,6 +264,35 @@ int main() {
             InputFile::fromFile(result.qrPath, "image/png"));
         bot.getApi().sendMessage(message->chat->id,
             "Ссылка для '" + name + "':\n" + result.link);
+    });
+
+    // ---- /getclash <имя> ----
+    bot.getEvents().onCommand("getclash", [&](Message::Ptr message) {
+        if (!isAllowed(cfg, message)) return;
+        std::istringstream iss(message->text);
+        std::string cmd, name;
+        iss >> cmd >> name;
+        if (name.empty()) {
+            bot.getApi().sendMessage(message->chat->id, "Использование: /getclash <имя>");
+            return;
+        }
+
+        auto result = xray::getClashProfile(cfg.xray, name);
+        if (!result.ok) {
+            bot.getApi().sendMessage(message->chat->id, "Ошибка: " + result.error);
+            return;
+        }
+        try {
+            bot.getApi().sendDocument(message->chat->id,
+                InputFile::fromFile(result.profilePath, "application/yaml"));
+            std::remove(result.profilePath.c_str());
+            bot.getApi().sendMessage(message->chat->id,
+                "YAML-профиль для '" + name + "' отправлен. Импортируйте файл локально в Clash Verge.");
+        } catch (const std::exception& e) {
+            std::remove(result.profilePath.c_str());
+            bot.getApi().sendMessage(message->chat->id,
+                std::string("Не удалось отправить YAML-профиль: ") + e.what());
+        }
     });
 
     // ---- /deletevless <имя> ----

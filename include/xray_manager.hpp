@@ -26,6 +26,13 @@ struct GetLinkResult {
     std::string clientName;
 };
 
+struct GetProfileResult {
+    bool ok = false;
+    std::string error;
+    std::string profilePath;
+    std::string clientName;
+};
+
 // У VLESS/Reality нет выдаваемого сервером внутреннего IP, поэтому
 // онлайн-статус нельзя корректно определить ICMP-пингом как у WireGuard.
 struct ClientStatus {
@@ -46,6 +53,9 @@ AddResult addClient(const XrayConfig& cfg, const std::string& name);
 // Повторно формирует ссылку и QR существующего VLESS-клиента без изменения
 // Xray config и без перезапуска сервиса.
 GetLinkResult getClientLink(const XrayConfig& cfg, const std::string& name);
+
+// Формирует YAML-профиль Mihomo/Clash Verge для локального импорта.
+GetProfileResult getClashProfile(const XrayConfig& cfg, const std::string& name);
 
 // Удаляет клиента по имени (полю "email" в конфиге Xray).
 RemoveResult removeClient(const XrayConfig& cfg, const std::string& name);
